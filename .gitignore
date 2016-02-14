@@ -1,0 +1,13 @@
+*.pyc
+*.swp
+.cache/
+*.egg/
+.eggs/
+*.egg-info/
+ChangeLog
+AUTHORS
+/dist/
+env/
+.env/
+venv/
+.venv/
