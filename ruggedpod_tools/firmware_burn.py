@@ -40,15 +40,22 @@ class Writer(object):
 
 
 class DDJob(threading.Thread):
-    def __init__(self, id, filename, device, data):
+    def __init__(self, id, filename, device, writer):
         threading.Thread.__init__(self, name=id, target=self.job)
         self.id = id
         self.filename = filename
         self.device = device
         self.name = device
-        self.data = data
+        self.data = 0
+        self.progress = ProgressBar(fd=writer,
+                                    widgets=[Percentage(), ' ',
+                                             FormatLabel(device), ' ',
+                                             Bar('='), ' ',
+                                             FileTransferSpeed(unit="M"), ' - ', ETA()])
+
 
     def job(self):
+        self.progress.start()
         size = os.stat(self.filename).st_size
         cmd = ["dd", "bs=1048576", "if=%s" % self.filename, "of=%s" % self.device]
         dd = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -58,16 +65,14 @@ class DDJob(threading.Thread):
             while True:
                 l = dd.stderr.readline()
                 if 'bytes transferred' in l:
-                    self.data[self.id] = int(float(l.partition(' ')[0])*100/size)
+                    self.data = int(float(l.partition(' ')[0])*100/size)
                     break
 
 
 class Monitor(threading.Thread):
-    def __init__(self, name, threads, pbar, data):
+    def __init__(self, name, threads):
         threading.Thread.__init__(self, name=name, target=self.job)
         self.threads = threads
-        self.pbar = pbar
-        self.data = data
 
     def job(self):
         while True:
@@ -77,9 +82,9 @@ class Monitor(threading.Thread):
                 if t.is_alive():
                     all_jobs_done = False
                 else:
-                    self.pbar[t.id].finish()
+                    t.progress.finish()
             for t in self.threads:
-                self.pbar[t.id].update(self.data[t.id])
+                t.progress.update(t.data)
             if all_jobs_done:
                 break
 
@@ -87,35 +92,20 @@ class Monitor(threading.Thread):
 def run(input):
     term = blessed.Terminal()
 
-    data = {}
-    writers = {}
-    pbar = {}
-
-    jobs = []
-    i = 0
-    for device in input['devices']:
-        jobs.append(DDJob("job-%s" % i, input['file'], device, data))
-        i = i + 1
-
-    i = 2
-    for t in jobs:
-        data[t.id] = 0
-        t.start()
-        writers[t.id] = Writer(term, (1, i), t.id)
-        pbar[t.id] = ProgressBar(fd=writers[t.id],
-                                 widgets=[Percentage(), ' ',
-                                          FormatLabel(t.name), ' ',
-                                          Bar('='), ' ',
-                                          FileTransferSpeed(unit="M"), ' - ', ETA()])
-        pbar[t.id].start()
-        pbar[t.id].update(0)
-        i = i + 1
-
     with term.fullscreen():
         with term.location(0, 0):
             print "%s RuggedPOD Firmware %s" % ("=" * 30, "=" * 30)
 
-        monitor = Monitor("ddmonitor", jobs, pbar, data)
+        jobs = []
+        i = 0
+        for device in input['devices']:
+            job_id = "job-%s" % i
+            job = DDJob(job_id, input['file'], device, Writer(term, (1, i+2), job_id))
+            jobs.append(job)
+            job.start()
+            i = i + 1
+
+        monitor = Monitor("ddmonitor", jobs)
         monitor.start()
         monitor.join()
         raw_input("")
