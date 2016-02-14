@@ -21,6 +21,7 @@ import time
 import signal
 import os
 import subprocess
+import re
 
 import blessed
 
@@ -46,7 +47,6 @@ class DDJob(threading.Thread):
         self.filename = filename
         self.device = device
         self.name = device
-        self.data = 0
         self.progress = ProgressBar(fd=writer,
                                     widgets=[Percentage(), ' ',
                                              FormatLabel(device), ' ',
@@ -64,28 +64,39 @@ class DDJob(threading.Thread):
             while True:
                 l = dd.stderr.readline()
                 if 'bytes transferred' in l:
-                    self.data = int(float(l.partition(' ')[0])*100/size)
+                    self.progress.update(int(float(l.partition(' ')[0])*100/size))
                     break
+        self.progress.finish()
 
 
 class Monitor(threading.Thread):
-    def __init__(self, name, threads):
+    def __init__(self, name, term, file, jobs):
         threading.Thread.__init__(self, name=name, target=self.job)
-        self.threads = threads
+        self.term = term
+        self.jobs = jobs
+        self.file = file
+        self.finish = False
 
     def job(self):
+        if self.jobs:
+            for job in self.jobs:
+                job.join()
+            return
+
+        devices = _read_devices("^disk[0-9]+$")
+        i = 2
+
         while True:
-            time.sleep(1)
-            all_jobs_done = True
-            for t in self.threads:
-                if t.is_alive():
-                    all_jobs_done = False
-                else:
-                    t.progress.finish()
-            for t in self.threads:
-                t.progress.update(t.data)
-            if all_jobs_done:
+            if self.finish:
                 break
+            time.sleep(.2)
+            new_devices = _read_devices("^disk[0-9]+$")
+            new, _ = _diff_arrays(new_devices, devices)
+            if new:
+                for device in new:
+                    self.jobs.append(_start_job(i, self.term, self.file, "/dev/" + device))
+                    i = i + 1
+            devices = new_devices
 
 
 def run(input):
@@ -96,15 +107,45 @@ def run(input):
             print "%s RuggedPOD Firmware %s" % ("=" * 30, "=" * 30)
 
         jobs = []
-        i = 0
-        for device in input['devices']:
-            job_id = "job-%s" % i
-            job = DDJob(job_id, input['file'], device, Writer(term, (1, i+2), job_id))
-            jobs.append(job)
-            job.start()
-            i = i + 1
+        if "devices" in input:
+            i = 0
+            for device in input["devices"]:
+                jobs.append(_start_job(i, term, input['file'], device))
+                i = i + 1
 
-        monitor = Monitor("ddmonitor", jobs)
+        monitor = Monitor("ddmonitor", term, input['file'], jobs)
         monitor.start()
+
+        try:
+            while True:
+                time.sleep(5)
+        except KeyboardInterrupt:
+            print 'interrupted!'
+            monitor.finish = True
+
         monitor.join()
+
+    if "devices" in input:
         raw_input("")
+
+
+def _start_job(i, term, file, device):
+    job_id = "job-%s" % i
+    job = DDJob(job_id, file, device, Writer(term, (1, i+2), job_id))
+    job.start()
+    return job
+
+
+def _diff_arrays(new, old):
+    """
+    returns a couple (n, m) where n is an array containing
+    elements present in new but not in old. And m is an
+    array containing elements present in old but not present
+    in new
+    """
+    return ([e for e in new if e not in set(old)], [e for e in old if e not in set(new)])
+
+
+def _read_devices(pattern):
+    pattern = re.compile(pattern)
+    return [e for e in os.listdir("/dev") if pattern.match(e)]

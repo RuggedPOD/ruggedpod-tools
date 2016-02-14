@@ -32,16 +32,13 @@ def ruggedpod(ctx):
 
 @ruggedpod.command(name='firmware-burn')
 @option('--target', help='Comma separated device list')
-@option('--image', help='Binary image file path')
+@option('--file', help='Binary image file path')
 @option('--version', help='Firmware version to copy (Git tag)')
 @pass_context
-def firmware_burn(ctx, target, image, version):
+def firmware_burn(ctx, target, file, version):
     """Copy the firmware binary image to the specified devices"""
     burn.run({
-        "file": "/Users/guillaume/dev/ocp/ruggedpod-tools/test.img",
-        "devices": [
-            "/tmp/a",
-        ]
+        "file": file
     })
 
 
