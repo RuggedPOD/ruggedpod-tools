@@ -53,7 +53,6 @@ class DDJob(threading.Thread):
                                              Bar('='), ' ',
                                              FileTransferSpeed(unit="M"), ' - ', ETA()])
 
-
     def job(self):
         self.progress.start()
         size = os.stat(self.filename).st_size
